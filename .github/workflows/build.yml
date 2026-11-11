@@ -5,9 +5,9 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      vflash_ref:
-        description: vflash branch, tag, or commit to build
-        default: main
+      vflash_run_id:
+        description: 'vflash CI run ID (blank: latest successful run on main)'
+        default: ''
         type: string
 
 permissions:
@@ -18,8 +18,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  vflash:
+    name: Select vflash artifacts
+    runs-on: ubuntu-24.04
+    outputs:
+      run_id: ${{ steps.select.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+      # Set VFLASH_TOKEN to a fine-grained token for the private vflash repo
+      # with Actions: read permission. No source checkout/Contents permission needed.
+      - name: Find a successful run with all four artifacts
+        id: select
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.VFLASH_TOKEN }}
+          VFLASH_REPOSITORY: ${{ vars.VFLASH_REPOSITORY || 'PascalSkylake/vflash' }}
+          VFLASH_BRANCH: ${{ vars.VFLASH_BRANCH || 'main' }}
+          VFLASH_WORKFLOW: ${{ vars.VFLASH_WORKFLOW || 'ci.yml' }}
+          VFLASH_RUN_ID: ${{ inputs.vflash_run_id }}
+        run: bash select-vflash-run.sh "$VFLASH_RUN_ID"
+
   build:
     name: ${{ matrix.platform }}
+    needs: vflash
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -28,47 +49,38 @@ jobs:
         include:
           - platform: Linux-x86_64
             runner: ubuntu-22.04
-            rust_targets: x86_64-unknown-linux-gnu
             exe: ''
           - platform: Linux-AArch64
             runner: ubuntu-24.04-arm
-            rust_targets: aarch64-unknown-linux-gnu
             exe: ''
           - platform: Darwin-universal
             runner: macos-15
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             exe: ''
           - platform: Windows-x86_64
             runner: windows-2025
-            rust_targets: x86_64-pc-windows-msvc
             exe: .exe
     defaults:
       run:
         shell: bash
     env:
-      CARGO_TERM_COLOR: always
       MACOSX_DEPLOYMENT_TARGET: '11.0'
       XZ_OPT: -T2 -6
     steps:
       - uses: actions/checkout@v5
 
-      # For a private vflash repo, set VFLASH_TOKEN to a token with read access.
-      # VFLASH_REPOSITORY and VFLASH_REF repository variables override defaults.
-      - name: Check out vflash
-        uses: actions/checkout@v5
-        with:
-          repository: ${{ vars.VFLASH_REPOSITORY || 'PascalSkylake/vflash' }}
-          ref: ${{ inputs.vflash_ref || vars.VFLASH_REF || 'main' }}
-          token: ${{ secrets.VFLASH_TOKEN || github.token }}
-          path: vflash-source
-          submodules: recursive
-          persist-credentials: false
+      - name: Download vflash binary
+        env:
+          GH_TOKEN: ${{ secrets.VFLASH_TOKEN }}
+          VFLASH_REPOSITORY: ${{ vars.VFLASH_REPOSITORY || 'PascalSkylake/vflash' }}
+          VFLASH_RUN_ID: ${{ needs.vflash.outputs.run_id }}
+          PLATFORM: ${{ matrix.platform }}
+        run: bash download-vflash.sh "$PLATFORM" "$VFLASH_RUN_ID" "$RUNNER_TEMP/vflash"
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential musl-tools binutils pkg-config libudev-dev curl unzip xz-utils
+          sudo apt-get install -y build-essential musl-tools binutils curl unzip xz-utils
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
@@ -87,13 +99,6 @@ jobs:
           path-type: inherit
           install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils curl tar gzip unzip xz
 
-      - name: Install Rust targets
-        env:
-          RUST_TARGETS: ${{ matrix.rust_targets }}
-        run: |
-          rustup toolchain install stable --profile minimal --target "$RUST_TARGETS"
-          rustup default stable
-
       - name: Check Bash syntax
         run: |
           for script in *.sh; do bash -n "$script"; done
@@ -110,11 +115,6 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
         run: bash build-make.sh "$PLATFORM" "$RUNNER_TEMP/make"
-
-      - name: Build vflash
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: bash build-vflash.sh "$PLATFORM" "$GITHUB_WORKSPACE/vflash-source" "$RUNNER_TEMP/vflash"
 
       - name: Package ATfE and tools
         if: runner.os != 'Windows'

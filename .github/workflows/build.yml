@@ -28,22 +28,18 @@ jobs:
         include:
           - platform: Linux-x86_64
             runner: ubuntu-22.04
-            shell: bash
             rust_targets: x86_64-unknown-linux-gnu
             exe: ''
           - platform: Linux-AArch64
             runner: ubuntu-24.04-arm
-            shell: bash
             rust_targets: aarch64-unknown-linux-gnu
             exe: ''
           - platform: Darwin-universal
             runner: macos-15
-            shell: bash
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             exe: ''
           - platform: Windows-x86_64
             runner: windows-2025
-            shell: 'msys2 {0}'
             rust_targets: x86_64-pc-windows-msvc
             exe: .exe
     defaults:
@@ -103,7 +99,14 @@ jobs:
           for script in *.sh; do bash -n "$script"; done
 
       - name: Build make
-        shell: ${{ matrix.shell }}
+        if: runner.os != 'Windows'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: bash build-make.sh "$PLATFORM" "$RUNNER_TEMP/make"
+
+      - name: Build make on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
         env:
           PLATFORM: ${{ matrix.platform }}
         run: bash build-make.sh "$PLATFORM" "$RUNNER_TEMP/make"
@@ -114,8 +117,19 @@ jobs:
         run: bash build-vflash.sh "$PLATFORM" "$GITHUB_WORKSPACE/vflash-source" "$RUNNER_TEMP/vflash"
 
       - name: Package ATfE and tools
+        if: runner.os != 'Windows'
         id: package
-        shell: ${{ matrix.shell }}
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          bash build-toolchain.sh "$PLATFORM" "$RUNNER_TEMP/make/make$EXE" \
+            "$RUNNER_TEMP/vflash/vflash$EXE" "$RUNNER_TEMP/dist"
+
+      - name: Package ATfE and tools on Windows
+        if: runner.os == 'Windows'
+        id: package_windows
+        shell: msys2 {0}
         env:
           PLATFORM: ${{ matrix.platform }}
           EXE: ${{ matrix.exe }}
@@ -124,17 +138,25 @@ jobs:
             "$RUNNER_TEMP/vflash/vflash$EXE" "$RUNNER_TEMP/dist"
 
       - name: Test the finished archive
-        shell: ${{ matrix.shell }}
+        if: runner.os != 'Windows'
         env:
           PLATFORM: ${{ matrix.platform }}
           ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: bash test-toolchain.sh "$PLATFORM" "$ARCHIVE"
+
+      - name: Test the finished archive on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCHIVE: ${{ steps.package_windows.outputs.archive }}
         run: bash test-toolchain.sh "$PLATFORM" "$ARCHIVE"
 
       # Upload only the finished tar.xz, directly, without a ZIP wrapper.
       - name: Upload archive
         uses: actions/upload-artifact@v7
         with:
-          path: ${{ steps.package.outputs.archive }}
+          path: ${{ steps.package.outputs.archive || steps.package_windows.outputs.archive }}
           archive: false
           if-no-files-found: error
           retention-days: 14

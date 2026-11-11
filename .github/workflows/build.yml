@@ -1,0 +1,140 @@
+name: Build toolchain archives
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      vflash_ref:
+        description: vflash branch, tag, or commit to build
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toolchains-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux-x86_64
+            runner: ubuntu-22.04
+            shell: bash
+            rust_targets: x86_64-unknown-linux-gnu
+            exe: ''
+          - platform: Linux-AArch64
+            runner: ubuntu-24.04-arm
+            shell: bash
+            rust_targets: aarch64-unknown-linux-gnu
+            exe: ''
+          - platform: Darwin-universal
+            runner: macos-15
+            shell: bash
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            exe: ''
+          - platform: Windows-x86_64
+            runner: windows-2025
+            shell: 'msys2 {0}'
+            rust_targets: x86_64-pc-windows-msvc
+            exe: .exe
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      XZ_OPT: -T2 -6
+    steps:
+      - uses: actions/checkout@v5
+
+      # For a private vflash repo, set VFLASH_TOKEN to a token with read access.
+      # VFLASH_REPOSITORY and VFLASH_REF repository variables override defaults.
+      - name: Check out vflash
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.VFLASH_REPOSITORY || 'PascalSkylake/vflash' }}
+          ref: ${{ inputs.vflash_ref || vars.VFLASH_REF || 'main' }}
+          token: ${{ secrets.VFLASH_TOKEN || github.token }}
+          path: vflash-source
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential musl-tools binutils pkg-config libudev-dev curl unzip xz-utils
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          command -v xz >/dev/null || brew install xz
+          # The VEX-supplied vexcom is Intel-only.
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+
+      - name: Install MinGW build tools
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils curl tar gzip unzip xz
+
+      - name: Install Rust targets
+        env:
+          RUST_TARGETS: ${{ matrix.rust_targets }}
+        run: |
+          rustup toolchain install stable --profile minimal --target "$RUST_TARGETS"
+          rustup default stable
+
+      - name: Check Bash syntax
+        run: |
+          for script in *.sh; do bash -n "$script"; done
+
+      - name: Build make
+        shell: ${{ matrix.shell }}
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: bash build-make.sh "$PLATFORM" "$RUNNER_TEMP/make"
+
+      - name: Build vflash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: bash build-vflash.sh "$PLATFORM" "$GITHUB_WORKSPACE/vflash-source" "$RUNNER_TEMP/vflash"
+
+      - name: Package ATfE and tools
+        id: package
+        shell: ${{ matrix.shell }}
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          bash build-toolchain.sh "$PLATFORM" "$RUNNER_TEMP/make/make$EXE" \
+            "$RUNNER_TEMP/vflash/vflash$EXE" "$RUNNER_TEMP/dist"
+
+      - name: Test the finished archive
+        shell: ${{ matrix.shell }}
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: bash test-toolchain.sh "$PLATFORM" "$ARCHIVE"
+
+      # Upload only the finished tar.xz, directly, without a ZIP wrapper.
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.package.outputs.archive }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

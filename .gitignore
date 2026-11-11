@@ -1,0 +1,7 @@
+.agents/
+.aws/
+.codex/
+vflash-source/
+dist/
+*.tar.xz
+*.vsix

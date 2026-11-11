@@ -31,10 +31,25 @@ tar -xJf - -C "$work/unpacked tools" < "$archive"
 bundle="$work/unpacked tools/ATfE-23.1.0-$platform"
 make="$bundle/tools/make$exe"
 clang="$bundle/bin/clang$exe"
-linker="$bundle/bin/ld.lld$exe"
 [[ ! -e $bundle/tools/ninja && ! -e $bundle/tools/ninja.exe ]]
-for binary in "$make" "$clang" "$linker" "$bundle/tools/vflash/vflash$exe" "$bundle/tools/vexcom/vexcom$exe"; do
+for binary in "$make" "$clang" "$bundle/bin/ld.lld$exe" "$bundle/tools/vflash/vflash$exe" "$bundle/tools/vexcom/vexcom$exe"; do
     [[ -f $binary ]]
+done
+runtime=armv7a_soft_vfpv3_d16_unaligned
+runtimes="$bundle/lib/clang-runtimes"
+newlib="$runtimes/newlib/arm-none-eabi"
+for required in "$bundle/bin/newlib.cfg" "$runtimes/newlib/multilib.yaml" \
+    "$newlib/include/stdio.h" "$newlib/include/c++/v1/vector" \
+    "$newlib/$runtime/lib/libc.a" "$newlib/$runtime/lib/libm.a" \
+    "$newlib/$runtime/lib/libc++.a" "$newlib/$runtime/lib/libclang_rt.builtins.a"; do
+    [[ -f $required ]] || { printf 'Missing packaged newlib file: %s\n' "$required" >&2; exit 1; }
+done
+for directory in "$runtimes"/* "$runtimes/newlib"/* "$newlib"/*; do
+    [[ -d $directory ]] || continue
+    case "$directory" in
+        "$runtimes/newlib"|"$newlib"|"$newlib/include"|"$newlib/$runtime") ;;
+        *) printf 'Unexpected packaged runtime directory: %s\n' "$directory" >&2; exit 1 ;;
+    esac
 done
 "$make" --version > "$work/make-version.txt"
 grep -q '^GNU Make 4[.]4[.]1[[:space:]]*$' "$work/make-version.txt"
@@ -85,26 +100,27 @@ case "$platform" in
         system_root=$(cygpath -u "$SYSTEMROOT")
         PATH="$system_root/System32:$system_root" "$make" --version
         clang=$(cygpath -m "$clang")
-        linker=$(cygpath -m "$linker")
         ;;
 esac
 
 cat > "$work/build test/main.c" <<'EOF'
+#include <string.h>
 extern int helper(void);
-int main(void) { return helper(); }
+int main(void) { return helper() + (int)strlen("newlib"); }
 EOF
 echo 'int helper(void) { return 42; }' > "$work/build test/helper.c"
 cat > "$work/build test/Makefile" <<'EOF'
 .PHONY: all fail
+TARGET_FLAGS = --config=newlib.cfg --target=arm-none-eabi -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=softfp -munaligned-access -fno-exceptions -fno-rtti
 all: firmware.elf
 %.o: %.c
-	"$(CLANG)" --target=armv7a-none-eabi -ffreestanding -c $< -o $@
+	"$(CLANG)" $(TARGET_FLAGS) -fno-builtin -c $< -o $@
 firmware.elf: main.o helper.o
-	"$(LINKER)" -Ttext=0x03800000 -e main $^ -o $@
+	"$(CLANG)" $(TARGET_FLAGS) -nostartfiles -Wl,-Ttext=0x03800000,-e,main $^ -o $@
 fail:
 	@exit 7
 EOF
-make_args=(-C "$work/build test" "CLANG=$clang" "LINKER=$linker")
+make_args=(-C "$work/build test" "CLANG=$clang")
 # Test native Windows command execution rather than accidentally relying on sh.
 if [[ $platform == Windows-x86_64 ]]; then make_args+=(SHELL=cmd.exe '.SHELLFLAGS=/c'); fi
 "$make" "${make_args[@]}" -j2 all

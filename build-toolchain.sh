@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Download ATfE, add make/vexcom/vflash, and repackage it.
+# Download ATfE and newlib, keep the V5 runtime, add tools, and repackage it.
 # Requires curl, unzip, tar, and xz. Packaging the macOS DMG requires macOS.
 # All other platforms can be packaged on any host; binaries are only copied.
 usage() {
@@ -25,6 +25,7 @@ platform=$1
 make_binary=$2
 vflash_binary=$3
 version=23.1.0
+runtime=armv7a_soft_vfpv3_d16_unaligned
 name="ATfE-$version-$platform"
 exe=
 case "$platform" in
@@ -90,6 +91,34 @@ case "$extension" in
         ;;
 esac
 [[ -f $bundle/bin/clang$exe ]] || { echo 'Unexpected ATfE archive layout.' >&2; exit 1; }
+
+echo 'Downloading newlib overlay...'
+curl --fail --location --retry 3 \
+    "https://github.com/arm/arm-toolchain/releases/download/release-$version-ATfE/ATfE-newlib-overlay-$version.tar.xz" \
+    --output "$work/newlib.tar.xz"
+# The host-independent overlay has no enclosing top-level directory.
+tar -xJf - -C "$bundle" < "$work/newlib.tar.xz"
+runtimes="$bundle/lib/clang-runtimes"
+newlib="$runtimes/newlib/arm-none-eabi"
+for required in "$bundle/bin/newlib.cfg" "$runtimes/newlib/multilib.yaml" \
+    "$newlib/include/stdio.h" "$newlib/include/c++/v1/vector" \
+    "$newlib/$runtime/lib/libc.a" "$newlib/$runtime/lib/libm.a" \
+    "$newlib/$runtime/lib/libc++.a" "$newlib/$runtime/lib/libclang_rt.builtins.a"; do
+    [[ -f $required ]] || { printf 'Newlib overlay is missing %s\n' "$required" >&2; exit 1; }
+done
+printf 'Keeping only newlib/arm-none-eabi/%s and shared headers...\n' "$runtime"
+# Keep metadata files (including multilib.yaml); remove other runtime directories.
+for directory in "$runtimes"/*; do
+    if [[ -d $directory && $directory != "$runtimes/newlib" ]]; then rm -rf "$directory"; fi
+done
+for directory in "$runtimes/newlib"/*; do
+    if [[ -d $directory && $directory != "$newlib" ]]; then rm -rf "$directory"; fi
+done
+for directory in "$newlib"/*; do
+    if [[ -d $directory && $directory != "$newlib/include" && $directory != "$newlib/$runtime" ]]; then
+        rm -rf "$directory"
+    fi
+done
 
 echo 'Downloading VEXcode extension for vexcom...'
 curl --fail --location --retry 3 \

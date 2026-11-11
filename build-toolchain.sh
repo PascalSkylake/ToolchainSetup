@@ -47,7 +47,16 @@ mkdir -p "${4:-$temp_root/toolchain-artifacts}"
 output_dir=$(cd "${4:-$temp_root/toolchain-artifacts}" && pwd)
 work=$(mktemp -d "$temp_root/toolchain-package.XXXXXX")
 mounted=false
+progress_pid=
+stop_progress() {
+    if [[ -n $progress_pid ]]; then
+        kill "$progress_pid" 2>/dev/null || true
+        wait "$progress_pid" 2>/dev/null || true
+        progress_pid=
+    fi
+}
 cleanup() {
+    stop_progress
     if [[ $mounted == true ]]; then hdiutil detach "$work/mount" -quiet || true; fi
     rm -rf "$work"
 }
@@ -60,7 +69,7 @@ curl --fail --location --retry 3 \
     "https://github.com/arm/arm-toolchain/releases/download/release-$version-ATfE/$name.$extension" \
     --output "$work/atfe.$extension"
 case "$extension" in
-    tar.xz) tar -xJf "$work/atfe.tar.xz" -C "$work/stage" ;;
+    tar.xz) tar -xJf - -C "$work/stage" < "$work/atfe.tar.xz" ;;
     zip) unzip -q "$work/atfe.zip" -d "$work/stage" ;;
     dmg)
         mkdir "$work/mount"
@@ -91,7 +100,27 @@ fi
 chmod +x "$bundle/tools/make$exe" "$bundle/tools/vexcom/vexcom$exe" "$bundle/tools/vflash/vflash$exe"
 
 printf 'Packaging %s.tar.xz...\n' "$name"
-COPYFILE_DISABLE=1 tar -cJf "$work/$name.tar.xz" -C "$work/stage" "$name"
+# CI has no terminal, so xz's interactive progress display is unavailable.
+# Report compressed output size periodically without extra dependencies.
+: > "$work/$name.tar.xz"
+(
+    started=$SECONDS
+    next_report=30
+    while sleep 1; do
+        elapsed=$((SECONDS - started))
+        if (( elapsed >= next_report )); then
+            bytes=$(wc -c < "$work/$name.tar.xz")
+            printf 'Packaging %s: %ss elapsed, %s MiB compressed output written\n' \
+                "$name" "$elapsed" "$((bytes / 1024 / 1024))"
+            next_report=$((elapsed + 30))
+        fi
+    done
+) &
+progress_pid=$!
+# Shell redirection avoids GNU tar's host:path handling of Windows drive letters.
+# pipefail ensures either tar or xz failing prevents publication of the archive.
+COPYFILE_DISABLE=1 tar -cf - -C "$work/stage" "$name" | xz -c > "$work/$name.tar.xz"
+stop_progress
 mv "$work/$name.tar.xz" "$output_dir/$name.tar.xz"
 archive="$output_dir/$name.tar.xz"
 if [[ -n ${GITHUB_OUTPUT:-} ]]; then

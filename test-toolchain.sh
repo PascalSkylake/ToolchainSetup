@@ -19,7 +19,7 @@ work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/toolchain-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 # Exercise paths with spaces, including when native Windows make launches clang.
 mkdir "$work/unpacked tools" "$work/build test"
-tar -xJf "$2" -C "$work/unpacked tools"
+tar -xJf - -C "$work/unpacked tools" < "$2"
 bundle="$work/unpacked tools/ATfE-23.1.0-$platform"
 make="$bundle/tools/make$exe"
 clang="$bundle/bin/clang$exe"

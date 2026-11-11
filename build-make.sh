@@ -22,7 +22,8 @@ work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/make-build.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 curl --fail --location --retry 3 https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz \
     --output "$work/make.tar.gz"
-tar -xzf "$work/make.tar.gz" -C "$work"
+# Read via stdin so GNU tar never interprets a Windows drive letter as a host.
+tar -xzf - -C "$work" < "$work/make.tar.gz"
 source_dir="$work/make-4.4.1"
 jobs=${JOBS:-4}
 exe=

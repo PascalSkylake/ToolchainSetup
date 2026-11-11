@@ -15,11 +15,19 @@ case "$platform" in
     Windows-x86_64) exe=.exe ;;
     *) echo "Unknown platform: $platform" >&2; exit 2 ;;
 esac
-work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/toolchain-test.XXXXXX")
+temp_root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+archive=$2
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        temp_root=$(cygpath -u "$temp_root")
+        archive=$(cygpath -u "$archive")
+        ;;
+esac
+work=$(mktemp -d "$temp_root/toolchain-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 # Exercise paths with spaces, including when native Windows make launches clang.
 mkdir "$work/unpacked tools" "$work/build test"
-tar -xJf - -C "$work/unpacked tools" < "$2"
+tar -xJf - -C "$work/unpacked tools" < "$archive"
 bundle="$work/unpacked tools/ATfE-23.1.0-$platform"
 make="$bundle/tools/make$exe"
 clang="$bundle/bin/clang$exe"

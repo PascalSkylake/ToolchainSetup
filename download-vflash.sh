@@ -19,7 +19,15 @@ esac
 [[ $2 =~ ^[0-9]+$ ]] || { echo 'RUN_ID must be numeric.' >&2; exit 2; }
 [[ -n ${GH_TOKEN:-} ]] || { echo 'Set VFLASH_TOKEN in Actions, or GH_TOKEN locally, with Actions: read access to vflash.' >&2; exit 1; }
 repository=${VFLASH_REPOSITORY:-PascalSkylake/vflash}
-work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/vflash-download.XXXXXX")
+temp_root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+output_dir=$3
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        temp_root=$(cygpath -u "$temp_root")
+        output_dir=$(cygpath -u "$output_dir")
+        ;;
+esac
+work=$(mktemp -d "$temp_root/vflash-download.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 # gh extracts a single named artifact directly into this directory.
 gh run download "$2" --repo "$repository" --name "$artifact" --dir "$work" || {
@@ -27,8 +35,8 @@ gh run download "$2" --repo "$repository" --name "$artifact" --dir "$work" || {
     exit 1
 }
 [[ -f $work/vflash$exe ]] || { echo "Artifact $artifact does not contain vflash$exe at its root." >&2; exit 1; }
-mkdir -p "$3"
-cp "$work/vflash$exe" "$3/vflash$exe"
+mkdir -p "$output_dir"
+cp "$work/vflash$exe" "$output_dir/vflash$exe"
 # GitHub's zipped artifacts do not preserve Unix executable permissions.
-chmod +x "$3/vflash$exe"
+chmod +x "$output_dir/vflash$exe"
 printf 'Downloaded %s from vflash run %s\n' "$artifact" "$2"

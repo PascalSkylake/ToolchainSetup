@@ -34,6 +34,16 @@ case "$platform" in
     Windows-x86_64) vex_platform=win32; extension=zip; exe=.exe ;;
     *) printf 'Unknown platform: %s\n' "$platform" >&2; exit 2 ;;
 esac
+temp_root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+output_dir=${4:-$temp_root/toolchain-artifacts}
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        temp_root=$(cygpath -u "$temp_root")
+        output_dir=$(cygpath -u "$output_dir")
+        make_binary=$(cygpath -u "$make_binary")
+        vflash_binary=$(cygpath -u "$vflash_binary")
+        ;;
+esac
 for binary in "$make_binary" "$vflash_binary"; do
     [[ -f $binary ]] || { printf 'Binary not found: %s\n' "$binary" >&2; exit 1; }
 done
@@ -42,9 +52,8 @@ if [[ $extension == dmg && $(uname -s) != Darwin ]]; then
     exit 1
 fi
 
-temp_root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
-mkdir -p "${4:-$temp_root/toolchain-artifacts}"
-output_dir=$(cd "${4:-$temp_root/toolchain-artifacts}" && pwd)
+mkdir -p "$output_dir"
+output_dir=$(cd "$output_dir" && pwd)
 work=$(mktemp -d "$temp_root/toolchain-package.XXXXXX")
 mounted=false
 progress_pid=

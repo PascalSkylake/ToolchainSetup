@@ -16,9 +16,18 @@ case "$(uname -s):$(uname -m):$platform" in
     MINGW*:x86_64:Windows-x86_64|MSYS*:x86_64:Windows-x86_64) ;;
     *) echo "Unsupported platform or mismatched runner: $platform" >&2; exit 2 ;;
 esac
-mkdir -p "$2"
-output_dir=$(cd "$2" && pwd)
-work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/make-build.XXXXXX")
+temp_root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+output_dir=$2
+# Actions supplies native paths (D:\a\_temp); MSYS tar needs POSIX paths.
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        temp_root=$(cygpath -u "$temp_root")
+        output_dir=$(cygpath -u "$output_dir")
+        ;;
+esac
+mkdir -p "$output_dir"
+output_dir=$(cd "$output_dir" && pwd)
+work=$(mktemp -d "$temp_root/make-build.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 curl --fail --location --retry 3 https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz \
     --output "$work/make.tar.gz"

@@ -5,10 +5,13 @@ export LC_ALL=C
 # Run on the platform being packaged. No robot is required.
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
     echo 'Usage: test-toolchain.sh PLATFORM ARCHIVE.tar.xz'
+    echo 'ATFE_VERSION must match the packaged version (default: 23.1.0).'
     exit 0
 fi
 [[ $# == 2 ]] || { echo 'Usage: test-toolchain.sh PLATFORM ARCHIVE.tar.xz' >&2; exit 2; }
 platform=$1
+version=${ATFE_VERSION:-23.1.0}
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid ATFE_VERSION.' >&2; exit 2; }
 exe=
 case "$platform" in
     Linux-x86_64|Linux-AArch64|Darwin-universal) ;;
@@ -28,7 +31,7 @@ trap 'rm -rf "$work"' EXIT
 # Exercise paths with spaces, including when native Windows make launches clang.
 mkdir "$work/unpacked tools" "$work/build test"
 tar -xJf - -C "$work/unpacked tools" < "$archive"
-bundle="$work/unpacked tools/ATfE-23.1.0-$platform"
+bundle="$work/unpacked tools/ATfE-$version-$platform"
 make="$bundle/tools/make$exe"
 clang="$bundle/bin/clang$exe"
 [[ ! -e $bundle/tools/ninja && ! -e $bundle/tools/ninja.exe ]]

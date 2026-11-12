@@ -16,6 +16,7 @@ Example:
   ./build-toolchain.sh Linux-x86_64 /usr/bin/make /tmp/vflash/vflash /tmp/dist
 
 VEXCOM_VSIX_URL optionally overrides the VEXcode 0.6.1 extension download URL.
+ATFE_VERSION selects the upstream version (default: 23.1.0).
 GitHub Actions step output: archive (the completed .tar.xz file).
 HELP
 }
@@ -24,7 +25,8 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then usage; exit 0; fi
 platform=$1
 make_binary=$2
 vflash_binary=$3
-version=23.1.0
+version=${ATFE_VERSION:-23.1.0}
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid ATFE_VERSION.' >&2; exit 2; }
 runtime=armv7a_soft_vfpv3_d16_unaligned
 name="ATfE-$version-$platform"
 exe=

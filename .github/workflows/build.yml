@@ -3,44 +3,66 @@ name: Build toolchain archives
 on:
   push:
   pull_request:
+  schedule:
+    # Check daily at 06:17 UTC, away from the busy start of the hour.
+    - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
-      vflash_run_id:
-        description: 'vflash CI run ID (blank: latest successful run on main)'
+      atfe_version:
+        description: 'ATfE version, e.g. 23.1.0 (blank: latest stable)'
         default: ''
         type: string
+      vflash_tag:
+        description: 'vflash release tag, e.g. v1.0.0 (blank: latest stable)'
+        default: ''
+        type: string
+      publish:
+        description: 'Publish the four tested archives as a release (default branch only)'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
   group: toolchains-${{ github.ref }}
-  cancel-in-progress: true
+  # A push must not interrupt an automatic release halfway through publication.
+  cancel-in-progress: false
 
 jobs:
-  vflash:
-    name: Select vflash artifacts
+  select:
+    name: Select ATfE and vflash releases
     runs-on: ubuntu-24.04
     outputs:
-      run_id: ${{ steps.select.outputs.run_id }}
+      version: ${{ steps.atfe.outputs.version }}
+      build: ${{ steps.atfe.outputs.build }}
+      vflash_tag: ${{ steps.vflash.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
-      # Set VFLASH_TOKEN to a fine-grained token for the private vflash repo
-      # with Actions: read permission. No source checkout/Contents permission needed.
-      - name: Find a successful run with all four artifacts
-        id: select
+      - name: Select ATfE version and check release assets
+        id: atfe
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATFE_VERSION: ${{ inputs.atfe_version }}
+          SKIP_PUBLISHED: ${{ github.event_name == 'schedule' || inputs.publish == true }}
+          SKIP_UNREADY: ${{ github.event_name == 'schedule' }}
+        run: bash select-atfe-release.sh "$ATFE_VERSION"
+      # VFLASH_TOKEN needs Contents: read access to the private vflash repository.
+      - name: Select vflash release with all four binaries
+        if: steps.atfe.outputs.build == 'true'
+        id: vflash
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.VFLASH_TOKEN }}
           VFLASH_REPOSITORY: ${{ vars.VFLASH_REPOSITORY || 'PascalSkylake/vflash' }}
-          VFLASH_BRANCH: ${{ vars.VFLASH_BRANCH || 'main' }}
-          VFLASH_WORKFLOW: ${{ vars.VFLASH_WORKFLOW || 'ci.yml' }}
-          VFLASH_RUN_ID: ${{ inputs.vflash_run_id }}
-        run: bash select-vflash-run.sh "$VFLASH_RUN_ID"
+          VFLASH_TAG: ${{ inputs.vflash_tag || vars.VFLASH_TAG }}
+        run: bash select-vflash-release.sh "$VFLASH_TAG"
 
   build:
     name: ${{ matrix.platform }}
-    needs: vflash
+    needs: select
+    if: needs.select.outputs.build == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -63,6 +85,7 @@ jobs:
       run:
         shell: bash
     env:
+      ATFE_VERSION: ${{ needs.select.outputs.version }}
       MACOSX_DEPLOYMENT_TARGET: '11.0'
       XZ_OPT: -T2 -6
     steps:
@@ -72,9 +95,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.VFLASH_TOKEN }}
           VFLASH_REPOSITORY: ${{ vars.VFLASH_REPOSITORY || 'PascalSkylake/vflash' }}
-          VFLASH_RUN_ID: ${{ needs.vflash.outputs.run_id }}
+          VFLASH_TAG: ${{ needs.select.outputs.vflash_tag }}
           PLATFORM: ${{ matrix.platform }}
-        run: bash download-vflash.sh "$PLATFORM" "$VFLASH_RUN_ID" "$RUNNER_TEMP/vflash"
+        run: bash download-vflash.sh "$PLATFORM" "$VFLASH_TAG" "$RUNNER_TEMP/vflash"
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -160,3 +183,30 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Publish toolchain release
+    needs: [select, build]
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download the four tested archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ATfE-${{ needs.select.outputs.version }}-*.tar.xz
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - name: Publish release with archives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATFE_VERSION: ${{ needs.select.outputs.version }}
+          VFLASH_TAG: ${{ needs.select.outputs.vflash_tag }}
+          VFLASH_REPOSITORY: ${{ vars.VFLASH_REPOSITORY || 'PascalSkylake/vflash' }}
+        run: bash publish-release.sh "$GITHUB_REPOSITORY" "$ATFE_VERSION" "$VFLASH_TAG" "$RUNNER_TEMP/release"

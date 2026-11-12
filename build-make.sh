@@ -92,6 +92,4 @@ case "$platform" in
 esac
 chmod +x "$output_dir/make$exe"
 "$output_dir/make$exe" --version
-# Included inside the final toolchain, not uploaded as separate artifacts.
-cp "$source_dir/COPYING" "$output_dir/make-COPYING"
 printf 'Built %s/make%s\n' "$output_dir" "$exe"

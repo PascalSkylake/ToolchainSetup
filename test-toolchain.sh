@@ -32,6 +32,21 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/unpacked tools" "$work/build test"
 tar -xJf - -C "$work/unpacked tools" < "$archive"
 bundle="$work/unpacked tools/ATfE-$version-$platform"
+# The shipped bundle has only the four directories present in ATfE 22.
+shopt -s nullglob dotglob
+for entry in "$bundle"/*; do
+    case "${entry##*/}" in
+        bin|include|lib|tools) [[ -d $entry ]] ;;
+        *) printf 'Unexpected top-level bundle entry: %s\n' "$entry" >&2; exit 1 ;;
+    esac
+done
+for entry in "$bundle/tools"/*; do
+    case "${entry##*/}" in
+        "make$exe"|vexcom|vflash) ;;
+        *) printf 'Unexpected bundled tool: %s\n' "$entry" >&2; exit 1 ;;
+    esac
+done
+[[ ! -e $bundle/bin/clangd && ! -e $bundle/bin/clangd.exe ]]
 make="$bundle/tools/make$exe"
 clang="$bundle/bin/clang$exe"
 [[ ! -e $bundle/tools/ninja && ! -e $bundle/tools/ninja.exe ]]

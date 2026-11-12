@@ -108,20 +108,6 @@ for required in "$bundle/bin/newlib.cfg" "$runtimes/newlib/multilib.yaml" \
     "$newlib/$runtime/lib/libc++.a" "$newlib/$runtime/lib/libclang_rt.builtins.a"; do
     [[ -f $required ]] || { printf 'Newlib overlay is missing %s\n' "$required" >&2; exit 1; }
 done
-printf 'Keeping only newlib/arm-none-eabi/%s and shared headers...\n' "$runtime"
-# Keep metadata files (including multilib.yaml); remove other runtime directories.
-for directory in "$runtimes"/*; do
-    if [[ -d $directory && $directory != "$runtimes/newlib" ]]; then rm -rf "$directory"; fi
-done
-for directory in "$runtimes/newlib"/*; do
-    if [[ -d $directory && $directory != "$newlib" ]]; then rm -rf "$directory"; fi
-done
-for directory in "$newlib"/*; do
-    if [[ -d $directory && $directory != "$newlib/include" && $directory != "$newlib/$runtime" ]]; then
-        rm -rf "$directory"
-    fi
-done
-
 echo 'Downloading VEXcode extension for vexcom...'
 curl --fail --location --retry 3 \
     "${VEXCOM_VSIX_URL:-https://openvsxorg.blob.core.windows.net/resources/VEXRobotics/vexcode/0.6.1/VEXRobotics.vexcode-0.6.1.vsix}" \
@@ -134,10 +120,8 @@ mkdir -p "$bundle/tools/vexcom" "$bundle/tools/vflash"
 cp -R "$vexcom_dir/." "$bundle/tools/vexcom/"
 cp "$make_binary" "$bundle/tools/make$exe"
 cp "$vflash_binary" "$bundle/tools/vflash/vflash$exe"
-if [[ -f $(dirname "$make_binary")/make-COPYING ]]; then
-    cp "$(dirname "$make_binary")/make-COPYING" "$bundle/tools/make-COPYING"
-fi
 chmod +x "$bundle/tools/make$exe" "$bundle/tools/vexcom/vexcom$exe" "$bundle/tools/vflash/vflash$exe"
+ATFE_VERSION="$version" bash "$(dirname "${BASH_SOURCE[0]}")/trim-toolchain.sh" "$platform" "$bundle"
 
 printf 'Packaging %s.tar.xz...\n' "$name"
 # CI has no terminal, so xz's interactive progress display is unavailable.
